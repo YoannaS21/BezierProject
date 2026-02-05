@@ -1,111 +1,98 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-from math import comb
 
-# --- 1. DE CASTELJAU ---
-def de_casteljau(points, t):
-    temp_points = np.copy(points).astype(float)
-    n = len(points)
-    for k in range(1, n):
-        for i in range(n - k):
-            temp_points[i] = (1 - t) * temp_points[i] + t * temp_points[i + 1]
-    return temp_points[0]
+def calculate_blossom_level(points, t_params):
+    current_points = np.copy(points).astype(float)
+    levels = [current_points]
+    for t in t_params:
+        if len(current_points) > 1:
+            current_points = (1 - t) * current_points[:-1] + t * current_points[1:]
+            levels.append(current_points)
+    return levels
 
-# --- 2. Аналитична производна ---
-def bezier_derivative(points, t):
-    n = len(points) - 1
-    derivative = np.zeros(2)
-    for i in range(n):
-        derivative += comb(n-1, i) * ((1-t)**(n-1-i)) * (t**i) * (points[i+1] - points[i])
-    derivative *= n
-    if np.linalg.norm(derivative) < 1e-8:
-        derivative = np.array([1e-6, 0])
-    return derivative
+def get_bezier_curve(control_points, num_steps=100):
+    if len(control_points) < 2:
+        return control_points
+    t_vals = np.linspace(0, 1, num_steps)
+    curve = []
+    for t in t_vals:
+        temp = np.copy(control_points).astype(float)
+        for k in range(1, len(control_points)):
+            temp = (1 - t) * temp[:-1] + t * temp[1:]
+        curve.append(temp[0])
+    return np.array(curve)
 
-# --- 3. Streamlit Конфигурация ---
-st.set_page_config(page_title="Поляра на Безие", layout="wide")
-st.title("🟦 Интерактивна Поляра на Безие")
+st.set_page_config(page_title="Крива на Безие и Поляри", layout="wide")
+st.title("Поляри на крива на Безие")
 
-# --- 4. Брой точки (Фиксираме 4 за перфектния старт) ---
-num_points = st.sidebar.slider("Брой контролни точки", 2, 10, 4, 1)
+st.sidebar.header("Конфигурация")
+num_points = st.sidebar.slider("Брой контролни точки", 2, 8, 4)
+n_degree = num_points - 1
 
-# --- 5. ХАРДКОДНАТИ "ХУБАВИ" ТОЧКИ ЗА СТАРТ ---
-# Тези координати създават перфектна примка и красива поляра
-beautiful_defaults = [
-    [5.0, 2.0],    # P0
-    [15.0, 15.0],  # P1
-    [0.0, 15.0],   # P2
-    [10.0, 2.0]    # P3
-]
+st.sidebar.subheader("Параметри")
+t_params = [st.sidebar.slider(f"t{i+1}", 0.0, 1.0, 0.5, key=f"t{i}") for i in range(n_degree)]
 
-# --- 6. Slider-и за координати ---
-st.sidebar.header("Контролни точки")
-points = []
+st.sidebar.subheader("Координати на точките")
+pts = []
+defaults = [[-6, -4], [-3, 6], [3, 6], [6, -4]]
 for i in range(num_points):
-    # Ако имаме дефинирани хубави точки за този индекс, ги ползваме, иначе смятаме нови
-    if i < len(beautiful_defaults):
-        def_x, def_y = beautiful_defaults[i]
-    else:
-        def_x, def_y = float(i * 3), float((i % 2) * 5)
-        
-    x = st.sidebar.slider(f"P{i} X", -25.0, 25.0, def_x, key=f"x_{i}")
-    y = st.sidebar.slider(f"P{i} Y", -25.0, 25.0, def_y, key=f"y_{i}")
-    points.append([x, y])
-points = np.array(points)
+    col1, col2 = st.sidebar.columns(2)
+    def_x = defaults[i][0] if i < len(defaults) else float(i*2)
+    def_y = defaults[i][1] if i < len(defaults) else float((i%2)*4)
+    x = col1.number_input(f"P{i}.x", value=float(def_x), key=f"x{i}")
+    y = col2.number_input(f"P{i}.y", value=float(def_y), key=f"y{i}")
+    pts.append([x, y])
+pts = np.array(pts)
 
-# --- 7. Изчисления ---
-t_values = np.linspace(0, 1, 400)
-bezier_curve = np.array([de_casteljau(points, t) for t in t_values])
+st.sidebar.subheader("Видимост")
+visibility = {0: True} 
 
-polar_curve = []
-for t in t_values:
-    p = de_casteljau(points, t)
-    d = bezier_derivative(points, t)
-    
-    # ПРАВИЛНАТА ПОЛЯРНА ТРАНСФОРМАЦИЯ:
-    # Допирателната е: A*x + B*y + C = 0
-    A = -d[1]
-    B = d[0]
-    C = d[1]*p[0] - d[0]*p[1]
-    
-    # Полюсът е (A/-C, B/-C)
-    if abs(C) > 1e-3:
-        polar_curve.append([-A/C, -B/C])
-polar_curve = np.array(polar_curve)
+for i in range(1, n_degree):
+    visibility[i] = st.sidebar.checkbox(f"Поляра ниво {i}", value=True)
 
-# --- 8. Plotly Визуализация ---
+visibility[n_degree] = st.sidebar.checkbox(f"Ниво {n_degree} (Blossom)", value=True)
+
+all_control_levels = calculate_blossom_level(pts, t_params)
+
 fig = go.Figure()
+colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
 
-# Окръжност r=1 (Директриса)
-theta = np.linspace(0, 2*np.pi, 200)
-fig.add_trace(go.Scatter(x=np.cos(theta), y=np.sin(theta),
-                         mode="lines", line=dict(color="lightgray", dash="dash"),
-                         name="Директриса r=1"))
+for i, ctrl_pts in enumerate(all_control_levels):
+    if visibility.get(i, False):
+        
+        if i == n_degree:
+            fig.add_trace(go.Scatter(
+                x=[ctrl_pts[0][0]], y=[ctrl_pts[0][1]],
+                mode='markers',
+                name=f"Ниво {i} (Blossom)",
+                marker=dict(size=15, color='black', symbol='star')
+            ))
+        
+        else:
+            curve_pts = get_bezier_curve(ctrl_pts)
+            name_label = "Крива на Безие" if i == 0 else f"Поляра ниво {i}"
+            fig.add_trace(go.Scatter(
+                x=curve_pts[:, 0], y=curve_pts[:, 1],
+                mode='lines',
+                name=name_label,
+                line=dict(color=colors[i % len(colors)], width=4 if i==0 else 2.5)
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=ctrl_pts[:, 0], y=ctrl_pts[:, 1],
+                mode='markers+lines',
+                name=f"Полигон {i}",
+                line=dict(color=colors[i % len(colors)], dash='dot', width=1),
+                marker=dict(size=8, symbol='circle-open')
+            ))
 
-# Контролен полигон
-fig.add_trace(go.Scatter(x=points[:,0], y=points[:,1], mode="lines+markers",
-                         marker=dict(size=10, color="red"),
-                         line=dict(color="rgba(255,0,0,0.2)"),
-                         name="Полигон"))
-
-# Безие крива (Синя)
-fig.add_trace(go.Scatter(x=bezier_curve[:,0], y=bezier_curve[:,1], mode="lines",
-                         line=dict(color="blue", width=4), name="Безие"))
-
-# Полярна крива (Зелена)
-if len(polar_curve) > 0:
-    fig.add_trace(go.Scatter(x=polar_curve[:,0], y=polar_curve[:,1], mode="lines",
-                             line=dict(color="green", width=4), name="Поляра"))
-
-# Настройки на мащаба
 fig.update_layout(
-    xaxis=dict(range=[-20, 20], zeroline=True),
-    yaxis=dict(range=[-20, 20], scaleanchor="x", scaleratio=1),
-    height=850, template="plotly_white",
-    title="Перфектна визуализация: Примка и нейната Поляра"
+    height=800, 
+    template="plotly_white", 
+    yaxis=dict(scaleanchor="x", scaleratio=1),
+    xaxis=dict(zeroline=True, zerolinewidth=1, zerolinecolor='LightGray'),
+    legend=dict(x=1.02, y=1, traceorder="normal")
 )
 
 st.plotly_chart(fig, use_container_width=True)
-
-st.success("Готово! Програмата се отваря с 'Примка' (Loop) – идеален пример за курсова работа.")
